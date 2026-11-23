@@ -1412,7 +1412,7 @@ fn move_no_replace(from: &Path, to: &Path) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::{PermissionsExt, symlink};
+    use std::os::unix::fs::symlink;
 
     fn local(s: &str) -> Content {
         Content {
@@ -1483,7 +1483,6 @@ mod tests {
             &program,
             include_str!("../tests/fixtures/fake-proton-drive"),
         )?;
-        fs::set_permissions(&program, fs::Permissions::from_mode(0o700))?;
         let local = root.join("local");
         let cloud = root.join("cloud");
         let trash = root.join("trash");
@@ -1591,7 +1590,6 @@ mod tests {
             &program,
             include_str!("../tests/fixtures/fake-proton-drive"),
         )?;
-        fs::set_permissions(&program, fs::Permissions::from_mode(0o700))?;
         let local = root.join("local");
         let cloud = root.join("cloud");
         let trash = root.join("trash");

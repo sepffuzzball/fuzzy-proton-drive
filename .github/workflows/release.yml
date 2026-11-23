@@ -60,8 +60,8 @@ jobs:
           set -euo pipefail
           if ! cargo test --locked --color never 2>&1 | tee "$RUNNER_TEMP/cargo-test.log"; then
             # Surface failures in run annotations even without access to job logs.
-            details="$(grep -E '^(error(\[.*\])?:|test .* \.\.\. FAILED|thread .* panicked|Error:)' \
-              "$RUNNER_TEMP/cargo-test.log" | tail -n 16 || true)"
+            details="$(grep -E -A 4 '^(error(\[.*\])?:|test .* \.\.\. FAILED|thread .* panicked|Error:)' \
+              "$RUNNER_TEMP/cargo-test.log" | tail -n 24 || true)"
             details="${details//%/%25}"
             details="${details//$'\r'/%0D}"
             details="${details//$'\n'/%0A}"

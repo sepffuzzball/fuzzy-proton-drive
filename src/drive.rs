@@ -139,14 +139,17 @@ pub struct SharedUrl {
 
 pub struct Cli {
     program: PathBuf,
+    #[cfg(test)]
+    fixture: Option<PathBuf>,
     trash: LocalTrash,
 }
 
 impl Cli {
     #[cfg(test)]
-    pub fn for_test(program: PathBuf) -> Self {
+    pub fn for_test(fixture: PathBuf) -> Self {
         Self {
-            program,
+            program: "python3".into(),
+            fixture: Some(fixture),
             trash: LocalTrash::Gio,
         }
     }
@@ -162,6 +165,8 @@ impl Cli {
             program: std::env::var_os("FUZZY_PROTON_CLI")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| "proton-drive".into()),
+            #[cfg(test)]
+            fixture: None,
             trash: LocalTrash::Gio,
         }
     }
@@ -172,6 +177,12 @@ impl Cli {
         S: AsRef<OsStr>,
     {
         let mut command = Command::new(&self.program);
+        // Interpret the temporary fixture instead of exec'ing it: a concurrent
+        // fork can briefly inherit a writer and cause ETXTBSY on exec.
+        #[cfg(test)]
+        if let Some(fixture) = &self.fixture {
+            command.arg(fixture);
+        }
         command.args(args).env("PROTON_DRIVE_LOG_LEVEL", "WARNING");
         run_process(command, limit).with_context(|| format!("{}", self.program.display()))
     }
