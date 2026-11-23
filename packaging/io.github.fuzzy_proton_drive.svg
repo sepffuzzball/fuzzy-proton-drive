@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <title>Fuzzy Proton Drive</title>
+  <defs>
+    <linearGradient id="case" x1="0" x2="1" y1="0" y2="1" gradientUnits="objectBoundingBox">
+      <stop stop-color="#2a2346"/>
+      <stop offset="1" stop-color="#14122c"/>
+    </linearGradient>
+    <linearGradient id="folder" x1="0" x2="0.9" y1="0" y2="1" gradientUnits="objectBoundingBox">
+      <stop stop-color="#eeceff"/>
+      <stop offset=".46" stop-color="#b890ff"/>
+      <stop offset="1" stop-color="#7463ed"/>
+    </linearGradient>
+    <linearGradient id="sync" x1="0" x2="1" y1="0" y2="1" gradientUnits="objectBoundingBox">
+      <stop stop-color="#edfef4"/>
+      <stop offset="1" stop-color="#79f4de"/>
+    </linearGradient>
+  </defs>
+  <rect x="7" y="10" width="114" height="114" rx="29" fill="#0b091b" opacity=".3"/>
+  <rect x="6" y="5" width="116" height="116" rx="29" fill="url(#case)" stroke="#57507c" stroke-width="2"/>
+  <path d="M23 45V35a8 8 0 0 1 8-8h19a9 9 0 0 1 7 3l6 6h31a8 8 0 0 1 8 8v9z" fill="#8968eb"/>
+  <path d="M18 52a8 8 0 0 1 8-8h74a8 8 0 0 1 8 9l-5 36a9 9 0 0 1-9 8H32a9 9 0 0 1-9-8z" fill="url(#folder)"/>
+  <path d="M26 46h72" stroke="#fbebff" stroke-linecap="round" opacity=".7" stroke-width="2"/>
+  <path d="M41 76a15 15 0 0 1 23-12m0 0v-7m0 7h-7m28 1a15 15 0 0 1-23 12m0 0v7m0-7h7"
+    fill="none" stroke="#332450" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="94" cy="92" r="19" fill="#1b1638" stroke="#252041" stroke-width="3"/>
+  <circle cx="94" cy="92" r="15.5" fill="url(#sync)"/>
+  <path d="m87 92 5 5 9-10" fill="none" stroke="#25434b" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

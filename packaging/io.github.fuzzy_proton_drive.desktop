@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Fuzzy Proton Drive
+Comment=Browse, share and sync Proton Drive on Wayland
+Exec=fuzzy-proton-drive
+Icon=io.github.fuzzy_proton_drive
+Terminal=false
+Categories=Network;FileTransfer;
+StartupNotify=true

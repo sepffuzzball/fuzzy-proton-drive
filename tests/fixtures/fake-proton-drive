@@ -1,0 +1,207 @@
+#!/usr/bin/env python3
+"""Purpose-built 0.9.0 CLI fixture. Never contacts Proton.
+
+Mirrors the real `filesystem` commands the app uses (info, list,
+create-folder, upload, download) plus move/rename/trash so the sync engine
+can be exercised for topology propagation.
+
+UIDs are stable across rename/move: the fixture records the path -> UID
+mapping in ".fuzzy-id.json" next to this script (outside the cloud tree), and
+re-keys the mapping on rename/move instead of re-deriving from the new path.
+Trashed nodes are moved into a hidden ".fuzzy-trash" folder (filtered out of
+listings) and kept resolvable by UID with a "trashTime" so the engine can
+confirm a trash rather than guessing a permanent removal.
+"""
+import hashlib
+import json
+from pathlib import Path
+import shutil
+import sys
+
+root = Path(__file__).with_name("cloud")
+backing = Path(__file__).parent
+volume = "A" * 22
+STATE = backing / ".fuzzy-id.json"
+TRASH_DIR = root / ".fuzzy-trash"
+ROOT_PATH = "/my-files"
+
+
+def load_state():
+    if STATE.exists():
+        return json.loads(STATE.read_text())
+    return {"uid_map": {}, "trashed": {}}
+
+
+def save_state(state):
+    tmp = STATE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state))
+    tmp.replace(STATE)
+
+
+def rel(p):
+    return p.relative_to(root)
+
+
+def visible(p):
+    return not p.name.startswith(".fuzzy-")
+
+
+def uid_of(path, state):
+    key = str(rel(path))
+    if key in state["uid_map"]:
+        return state["uid_map"][key]
+    u = volume + "~" + hashlib.sha1(key.encode()).hexdigest()[:22]
+    state["uid_map"][key] = u
+    return u
+
+
+def find_path(uid_value, state):
+    for key, u in state["uid_map"].items():
+        if u == uid_value:
+            p = root / key
+            if p.exists():
+                return p
+    return None
+
+
+def resolve(remote, state):
+    if remote == ROOT_PATH:
+        return root
+    assert remote.startswith(ROOT_PATH + "/"), remote
+    uid_value = remote.removeprefix(ROOT_PATH + "/")
+    p = find_path(uid_value, state)
+    if p is None:
+        raise AssertionError(f"Node not found: {remote}")
+    return p
+
+
+def node_data(path, state, trashed_uid=None, trash_time=None):
+    data = {
+        "uid": trashed_uid or uid_of(path, state),
+        "type": "folder" if path.is_dir() else "file",
+        "name": {"ok": True, "value": path.name},
+        "isShared": False,
+        "modificationTime": "2026-10-05T12:00:00.000Z",
+        "parentUid": None if path == root else uid_of(path.parent, state),
+    }
+    if trash_time:
+        data["trashTime"] = trash_time
+    if path.is_file():
+        body = path.read_bytes()
+        digest = hashlib.sha1(body).hexdigest()
+        data["activeRevision"] = {
+            "uid": digest,
+            "claimedSize": len(body),
+            "claimedDigests": {"sha1": digest, "sha1Verified": True},
+        }
+    return data
+
+
+def info_node(remote, state):
+    if remote == ROOT_PATH:
+        return node_data(root, state)
+    assert remote.startswith(ROOT_PATH + "/"), remote
+    uid_value = remote.removeprefix(ROOT_PATH + "/")
+    if uid_value in state["trashed"]:
+        t = state["trashed"][uid_value]
+        p = Path(t["trashed_path"])
+        return node_data(p, state, trashed_uid=uid_value, trash_time=t["trash_time"])
+    p = find_path(uid_value, state)
+    if p is None:
+        raise AssertionError(f"Node not found: {remote}")
+    return node_data(p, state)
+
+
+group, verb, flag, *args = sys.argv[1:]
+assert (group, flag) == ("filesystem", "--json"), (group, flag)
+state = load_state()
+
+if verb == "info":
+    print(json.dumps(info_node(args[0], state)))
+elif verb == "list":
+    import os
+    if args[0] == ROOT_PATH:
+        base = root
+    else:
+        base = resolve(args[0], state)
+    listed = [node_data(p, state) for p in base.iterdir() if visible(p)]
+    print(json.dumps(listed))
+elif verb == "create-folder":
+    if len(args) == 3 and args[1] == "--":
+        parent, _, name = args
+    else:
+        parent, name = args
+    new = resolve(parent, state) / name
+    new.mkdir()
+    print(json.dumps(node_data(new, state)))
+elif verb in {"upload", "download"}:
+    file_option, strategy, folder_option, folder_strategy, source, dest = args
+    assert (file_option, folder_option, folder_strategy) == (
+        "--file-conflict-strategy", "--folder-conflict-strategy", "skip",
+    )
+    assert strategy in {"create-new-revision", "skip"}
+    if verb == "download":
+        source, dest = resolve(source, state), Path(dest)
+    else:
+        source, dest = Path(source), resolve(dest, state)
+    target = dest / source.name
+    skipped = target.exists() and (
+        strategy == "skip" or target.read_bytes() == source.read_bytes()
+    )
+    if not skipped:
+        shutil.copyfile(source, target)
+    print(json.dumps({
+        "transferredItems": int(not skipped), "failedItems": 0,
+        "skippedItems": int(skipped), "transferredBytes": source.stat().st_size,
+        "failures": [],
+    }))
+elif verb == "rename":
+    source, new_name = args
+    src_path = resolve(source, state)
+    key = str(rel(src_path))
+    u = state["uid_map"].get(key)
+    dest = src_path.with_name(new_name)
+    if dest.exists() and dest != src_path:
+        print("A file or folder with that name already exists", file=sys.stderr)
+        sys.exit(1)
+    src_path.rename(dest)
+    state["uid_map"].pop(key, None)
+    state["uid_map"][str(rel(dest))] = u
+    print(json.dumps(node_data(dest, state)))
+elif verb == "move":
+    source, parent = args
+    src_path = resolve(source, state)
+    key = str(rel(src_path))
+    u = state["uid_map"].get(key)
+    target_dir = resolve(parent, state)
+    dest = target_dir / src_path.name
+    if dest.exists():
+        print(json.dumps([{"uid": u, "ok": False}]))
+    else:
+        src_path.rename(dest)
+        state["uid_map"].pop(key, None)
+        state["uid_map"][str(rel(dest))] = u
+        print(json.dumps([{"uid": u, "ok": True}]))
+elif verb == "trash":
+    results = []
+    TRASH_DIR.mkdir(exist_ok=True)
+    for source in args:
+        src_path = resolve(source, state)
+        key = str(rel(src_path))
+        u = state["uid_map"].get(key)
+        dest = TRASH_DIR / src_path.name
+        if dest.exists():
+            dest = TRASH_DIR / (src_path.name + "." + u.split("~")[-1])
+        shutil.move(str(src_path), str(dest))
+        state["uid_map"].pop(key, None)
+        state["trashed"][u] = {
+            "trashed_path": str(dest),
+            "original": str(src_path),
+            "trash_time": "2026-11-23T12:00:00.000Z",
+        }
+        results.append({"uid": u, "ok": True})
+    print(json.dumps(results))
+else:
+    raise AssertionError(f"Unexpected command: {verb}")
+
+save_state(state)
