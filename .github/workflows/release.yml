@@ -56,7 +56,18 @@ jobs:
           rustup default stable
 
       - name: Test
-        run: cargo test --locked
+        run: |
+          set -euo pipefail
+          if ! cargo test --locked --color never 2>&1 | tee "$RUNNER_TEMP/cargo-test.log"; then
+            # Surface failures in run annotations even without access to job logs.
+            details="$(grep -E '^(error(\[.*\])?:|test .* \.\.\. FAILED|thread .* panicked|Error:)' \
+              "$RUNNER_TEMP/cargo-test.log" | tail -n 16 || true)"
+            details="${details//%/%25}"
+            details="${details//$'\r'/%0D}"
+            details="${details//$'\n'/%0A}"
+            printf '::error title=Cargo test failed::%s\n' "${details:-See the Test step logs.}"
+            exit 1
+          fi
 
       - name: Build release binary
         run: cargo build --release --locked

@@ -1815,9 +1815,9 @@ mod tests {
         fs::create_dir_all(env.local.join("sub"))?;
         fs::write(env.local.join("sub/a.txt"), "mount data")?;
         assert_eq!(sync(&env.cli, &env.binding, &env.journal)?.uploads, 1);
-        // Simulate a nested mount disappearing: the same path exists but is a
-        // brand-new empty directory with a different identity.
-        fs::remove_dir_all(env.local.join("sub"))?;
+        // Keep the old directory alive outside the sync tree so the filesystem
+        // cannot reuse its inode for the replacement.
+        fs::rename(env.local.join("sub"), temp.path().join("old-sub"))?;
         fs::create_dir_all(env.local.join("sub"))?;
         let second = sync(&env.cli, &env.binding, &env.journal)?;
         assert_eq!(second.deletions, 0, "{:?}", second.details);
