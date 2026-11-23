@@ -1,0 +1,190 @@
+name: Release
+
+# Publish a GitHub Release for pushes that modify files.
+#
+# - Triggered only by pushes to branches whose push actually changed files
+#   (paths: ['**']). Tag pushes never trigger because only `branches` is
+#   declared, and branch/tag deletions are skipped defensively below, so the
+#   workflow only runs for real, file-changing commits on a branch.
+# - `main` gets a normal release; any other branch gets a prerelease that is
+#   not the latest. Each push gets its own distinct, stable release/tag.
+# - Re-running an already successful run is idempotent: the same run id and
+#   commit SHA form the same tag, and an existing release is left untouched.
+
+on:
+  push:
+    branches: ['**']
+    paths: ['**']
+
+# Default permission is kept minimal; each job declares exactly what it needs.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build, test and package
+    runs-on: ubuntu-24.04
+    # Guard: only real, file-changing pushes to a branch. Skips branch/tag
+    # deletions and any stray tag event defensively, so nothing publishes.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/') && !github.event.deleted
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.package.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install build dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libwayland-dev \
+            libxkbcommon-dev \
+            libegl-dev \
+            libgl-dev \
+            python3
+
+      - name: Install stable Rust toolchain
+        run: |
+          set -euo pipefail
+          rustup update stable
+          rustup default stable
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Package release archive
+        id: package
+        run: |
+          set -euo pipefail
+          VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml)"
+          PKG="fuzzy-proton-drive-${VERSION}"
+          TARBALL="fuzzy-proton-drive-${VERSION}-linux-x86_64.tar.gz"
+          STAGE="$(mktemp -d)"
+
+          # Installation-friendly layout that mirrors /usr/local:
+          #   bin/                                  -> /usr/local/bin
+          #   share/applications/                   -> /usr/local/share/applications
+          #   share/icons/hicolor/scalable/apps/    -> /usr/local/share/icons/hicolor/scalable/apps
+          mkdir -p "$STAGE/$PKG/bin"
+          mkdir -p "$STAGE/$PKG/share/applications"
+          mkdir -p "$STAGE/$PKG/share/icons/hicolor/scalable/apps"
+
+          install -Dm755 target/release/fuzzy-proton-drive \
+            "$STAGE/$PKG/bin/fuzzy-proton-drive"
+          install -Dm644 README.md "$STAGE/$PKG/README.md"
+          install -Dm644 packaging/io.github.fuzzy_proton_drive.desktop \
+            "$STAGE/$PKG/share/applications/io.github.fuzzy_proton_drive.desktop"
+          install -Dm644 packaging/io.github.fuzzy_proton_drive.svg \
+            "$STAGE/$PKG/share/icons/hicolor/scalable/apps/io.github.fuzzy_proton_drive.svg"
+
+          tar -czf "$TARBALL" -C "$STAGE" "$PKG"
+          sha256sum "$TARBALL" > SHA256SUMS
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          ls -lh "$TARBALL" SHA256SUMS
+
+      - name: Upload release archive
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzzy-proton-drive-linux-x86_64
+          path: |
+            fuzzy-proton-drive-*-linux-x86_64.tar.gz
+            SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-24.04
+    needs: build
+    # Same guard as build; identical conditions keep the two jobs in lockstep.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/') && !github.event.deleted
+    permissions:
+      contents: write
+    steps:
+      - name: Download release archive
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: fuzzy-proton-drive-linux-x86_64
+          path: artifacts
+
+      - name: Verify checksum
+        run: |
+          set -euo pipefail
+          cd artifacts
+          sha256sum -c SHA256SUMS
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.build.outputs.version }}
+          SHA: ${{ github.sha }}
+          BRANCH: ${{ github.ref_name }}
+          REF: ${{ github.ref }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.event.repository.html_url }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          cd artifacts
+          TARBALL="fuzzy-proton-drive-${VERSION}-linux-x86_64.tar.gz"
+          test -f "$TARBALL"
+
+          # Unique but stable per push: run id + short commit SHA. Re-running the
+          # same run keeps the same run id and SHA, so the tag is stable.
+          TAG="release-${RUN_ID}-${SHA:0:7}"
+
+          RELEASE_ARGS=()
+          LATEST_ARGS=()
+          if [ "$REF" != "refs/heads/main" ]; then
+            RELEASE_ARGS+=(--prerelease)
+            LATEST_ARGS+=(--latest=false)
+          fi
+
+          # gh creates a draft before uploading assets. Recover a draft left
+          # behind by an interrupted run, but never overwrite a public release.
+          if existing="$(gh release view "$TAG" --json isDraft,assets)"; then
+            if jq -e '.isDraft' <<<"$existing" >/dev/null; then
+              gh release upload "$TAG" "$TARBALL" SHA256SUMS --clobber
+              gh release edit "$TAG" --draft=false "${LATEST_ARGS[@]}"
+            else
+              jq -e --arg archive "$TARBALL" \
+                '([.assets[].name] | index($archive)) != null and
+                 ([.assets[].name] | index("SHA256SUMS")) != null' \
+                <<<"$existing" >/dev/null
+              echo "Release $TAG already exists with both assets; leaving it untouched."
+            fi
+            exit 0
+          fi
+
+          {
+            echo "## Fuzzy Proton Drive ${VERSION}"
+            echo
+            echo "- Commit: \`${SHA}\`"
+            echo "- Branch: \`${BRANCH}\`"
+            echo "- Build run: ${RUN_URL}"
+            echo
+            echo "Runtime dependencies (the Proton Drive CLI, a Wayland session, an "
+            echo "EGL/GL provider, ffmpeg, kdialog and gio) are **not** bundled and "
+            echo "must be installed separately. See \`README.md\` for the full list."
+          } > notes.md
+
+          # Bind the new release to the exact commit that was built and tested.
+          gh release create "$TAG" \
+            "$TARBALL" \
+            SHA256SUMS \
+            --target "${SHA}" \
+            --title "Fuzzy Proton Drive ${VERSION}" \
+            --notes-file notes.md \
+            "${RELEASE_ARGS[@]}" "${LATEST_ARGS[@]}"
+
+          echo "Published release $TAG."

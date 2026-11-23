@@ -66,3 +66,34 @@ The launcher icon is drawn in SVG. To regenerate the PNG embedded in the app aft
 ```bash
 rsvg-convert -o packaging/io.github.fuzzy_proton_drive.png packaging/io.github.fuzzy_proton_drive.svg
 ```
+
+## Release builds
+
+The `.github/workflows/release.yml` workflow publishes a GitHub Release for every push that modifies files. It runs on `ubuntu-24.04` (Linux x86-64) and is triggered only on branch pushes — a push that changes no files, a pushed tag, or a branch/tag deletion never publishes. A push to `main` produces a normal release; a push to any other branch produces a prerelease that is not marked latest.
+
+For each qualifying push the workflow:
+
+1. Installs the build dependencies (`pkg-config`, `libwayland-dev`, `libxkbcommon-dev`, `libegl-dev`, `libgl-dev`, `python3`).
+2. Uses rustup to select the stable Rust toolchain on the runner.
+3. Runs `cargo test --locked`, then `cargo build --release --locked`.
+4. Packages a `.tar.gz` archive with a versioned top-level directory and an installation-friendly layout that mirrors `/usr/local`:
+   - `bin/fuzzy-proton-drive`
+   - `share/applications/io.github.fuzzy_proton_drive.desktop`
+   - `share/icons/hicolor/scalable/apps/io.github.fuzzy_proton_drive.svg`
+   - `README.md`
+
+   The archive is named `fuzzy-proton-drive-<version>-linux-x86_64.tar.gz` and is shipped together with a `SHA256SUMS` file.
+5. Creates a stable per-push release whose tag is `release-<run id>-<short commit>` and is pinned to the exact commit that was built and tested (the release points at that commit, not at a possibly-moved branch head). Re-running an already successful run does not create a duplicate or overwrite the existing release.
+
+Download both the `.tar.gz` and `SHA256SUMS` from the same release. In the download directory, verify and install them (substitute the downloaded version for `0.1.0`):
+
+```bash
+sha256sum -c SHA256SUMS && tar -xzf fuzzy-proton-drive-0.1.0-linux-x86_64.tar.gz
+sudo install -Dm755 fuzzy-proton-drive-0.1.0/bin/fuzzy-proton-drive /usr/local/bin/fuzzy-proton-drive
+sudo install -Dm644 fuzzy-proton-drive-0.1.0/share/applications/io.github.fuzzy_proton_drive.desktop /usr/local/share/applications/io.github.fuzzy_proton_drive.desktop
+sudo install -Dm644 fuzzy-proton-drive-0.1.0/share/icons/hicolor/scalable/apps/io.github.fuzzy_proton_drive.svg /usr/local/share/icons/hicolor/scalable/apps/io.github.fuzzy_proton_drive.svg
+```
+
+The workflow uses the pinned official GitHub Actions `actions/checkout@v7.0.1`, `actions/upload-artifact@v7.0.2`, and `actions/download-artifact@v8.0.2`, with `persist-credentials: false` on checkout.
+
+Runtime dependencies are **external** and are never bundled in the archive. The release still expects the Proton Drive CLI on `PATH`, a Plasma Wayland session, a working Secret Service provider, an EGL/GL provider (such as `mesa` or the vendor driver), `ffmpeg`, `kdialog`, and `gio`, exactly as listed under [Run](#run) above. The `README.md` inside the archive documents them.
